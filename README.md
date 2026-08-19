@@ -123,6 +123,88 @@ This chart ranks the topics with the **largest relative ROUGE-L improvement** af
 
 ---
 
+## 🔎 Example Outputs
+
+[#-example-outputs](#-example-outputs)
+
+Numbers only tell half the story — here are three real examples pulled directly from `results/`, showing a clear win, a typical case, and a regression.
+
+### ✅ Clear Improvement
+
+**Topic:** KV cache memory math and context length scaling | **Difficulty:** Staff
+**ROUGE-L:** 0.140 → 0.267
+
+**Question:**
+> I'm implementing a custom attention mechanism and noticed that when my sequence length approaches the total number of physical memory pages, `malloc` calls for KV tensors start failing or becoming extremely slow. I'm not explicitly using PagedAttention. Is this expected behavior?
+
+**Base model:**
+> Yes, it is possible to encounter issues with `malloc` calls failing or becoming slow... This can happen due to several reasons: 1. Memory Fragmentation... 2. System Memory Limitations... 3. Kernel Limits... 4. Thread Safety Issues... *(generic checklist, never names the actual mechanism)*
+
+**Fine-tuned model:**
+> Yes, this is exactly what's happening with your custom attention implementation if you're not using an optimized library like `paged_attention` or `vLLM`... `malloc` will fail to allocate contiguous blocks large enough to hold the entire KV cache... The solution is to either: 1) Use a proper PagedAttention/vLLM-compatible framework... 2) Implement a custom allocator...
+
+**Reference:**
+> Yes, this is absolutely expected... your custom attention layer is likely allocating contiguous blocks for the entire KV cache... The solution is to move to a paged memory scheme... This is precisely what PagedAttention solves.
+
+The fine-tuned model correctly diagnosed contiguous-allocation fragmentation and named PagedAttention as the fix, matching the reference's reasoning — the base model listed generic memory-management advice without identifying the actual cause.
+
+---
+
+### ➖ Typical Case
+
+**Topic:** Weight initialization schemes and why they matter | **Difficulty:** Staff
+**ROUGE-L:** 0.085 → 0.117
+
+**Question:**
+> Review this `init_weights` function. We're using it for our custom MLP mixer block.
+> ```python
+> def init_weights(m):
+>     if isinstance(m, (nn.Linear, nn.Conv2d)):
+>         nn.init.xavier_normal_(m.weight)
+>         if m.bias is not None:
+>             nn.init.constant_(m.bias, 0)
+> ```
+
+**Base model:**
+> *(Restates what the code does line-by-line, adds a usage example — never questions whether Xavier init is the right choice)*
+
+**Fine-tuned model:**
+> ...there's one critical issue with your comment about the bias being optional. If you have `bias=True`... `constant_(m.bias, 0)` will *not* apply to the bias weights... The correct way to handle this is to explicitly check for `bias=True`...
+
+**Reference:**
+> Using `xavier_normal_` for MLP Mixer blocks is a red flag. Mixer blocks frequently use GELU or Swish activations, for which `xavier_normal_` is suboptimal... Switch to `kaiming_normal_`...
+
+This is a representative *near-median* example, not cherry-picked: the fine-tuned model moved away from the base model's pure code-paraphrasing style and toward actively critiquing the code — the right instinct — but it flagged the wrong issue (a bias-check bug that doesn't actually exist in the code) instead of the real one (wrong initializer for GELU-based activations). It's evidence the fine-tune shifted *behavior* (critique instead of describe) without reliably shifting *correctness*.
+
+---
+
+### ⚠️ Regression
+
+**Topic:** Dataset contamination detection (train/test overlap, benchmark leakage) | **Difficulty:** Senior
+**ROUGE-L:** 0.297 → 0.205
+
+**Question:**
+> Review this `data_split.py` for potential issues. I'm using `huggingface/datasets`.
+> ```python
+> dataset = load_dataset('my_corpus', split='train')
+> train_test_split = dataset.train_test_split(test_size=0.05, seed=42)
+> train_dataset = train_test_split['train']
+> test_dataset = train_test_split['test']
+> val_dataset = train_dataset.train_test_split(test_size=0.1)['test']
+> ```
+
+**Base model:**
+> The line where you define `val_dataset` should use the `'validation'` split instead of `'test'`... *(wrong fix, but at least flags the right line)*
+
+**Fine-tuned model:**
+> your `val_dataset` creation logic is flawed: you're calling `'train'` on `train_dataset`, which will return an empty list because `train_dataset` itself has no data to split from... You need to create `val_dataset` *before* the main training loop starts, not inside the training loop itself.
+
+**Reference:**
+> You're splitting `train_dataset` again for `val_dataset`. That means your `val_dataset` elements are a subset of your *original* training split. Your validation metrics will be optimistically biased... You need to split the original `dataset` into three distinct sets *once*.
+
+Both models miss the actual bug (validation-set leakage from the training split), but the fine-tuned model's answer is confidently wrong in a new way — it invents a "training loop" that doesn't exist in the code and claims the split will silently return empty data, which is false. This is a case where fine-tuning made the response more assertive without making it more correct, and it's a useful reminder that ROUGE-L improvements track surface phrasing, not fact-checking.
+
+
 ## 🔍 Error & Regression Analysis
 
 Fine-tuning does not uniformly improve every example — and pretending otherwise would make for a dishonest evaluation. To keep this analysis grounded in reality, examples where the **fine-tuned model underperformed the baseline** were specifically isolated and studied.
