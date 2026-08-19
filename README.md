@@ -149,8 +149,9 @@ LLM-FineTuning-Project/
 │   └── test/
 │       └── test.csv
 │
-├── notebook/
-│   └── fine_tuning.ipynb
+├── notebooks/
+│   └── qwen_domain_finetuning.ipynb
+
 │
 ├── results/
 │   ├── plots/
